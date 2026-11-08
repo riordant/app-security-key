@@ -17,10 +17,9 @@ cx_err_t cx_cmac_start(cx_cipher_context_t *ctx, const uint8_t *key, size_t key_
         return CX_INVALID_PARAMETER;
     }
 
-    CX_CHECK(cx_cipher_setkey(ctx, key, key_bitlen, CX_ENCRYPT));
-
     ctx->cmac_ctx = &G_cx.cmac;
     memset(ctx->cmac_ctx, 0, sizeof(cx_cmac_context_t));
+    CX_CHECK(cx_cipher_setkey(ctx, key, key_bitlen, CX_ENCRYPT));
 
 end:
     return error;
@@ -29,13 +28,17 @@ end:
 cx_err_t cx_cmac_update(cx_cipher_context_t *ctx, const uint8_t *input, size_t in_len)
 {
     cx_err_t error;
-    size_t   out_len = ctx->cipher_info->block_size;
+    size_t   out_len;
     size_t   i, n;
     size_t  *current_len;
 
     if ((NULL == ctx) || (NULL == ctx->cipher_info) || (NULL == input) || (NULL == ctx->cmac_ctx)) {
         return CX_INVALID_PARAMETER;
     }
+    if (ctx->cipher_info->block_size != CX_AES_BLOCK_SIZE ||
+        ctx->cmac_ctx->unprocessed_len > CX_AES_BLOCK_SIZE || in_len > SIZE_MAX - CX_AES_BLOCK_SIZE)
+        return CX_INVALID_PARAMETER_SIZE;
+    out_len = ctx->cipher_info->block_size;
 
     current_len = &ctx->cmac_ctx->unprocessed_len;
 
@@ -55,7 +58,7 @@ cx_err_t cx_cmac_update(cx_cipher_context_t *ctx, const uint8_t *input, size_t i
         *current_len = 0;
     }
 
-    n = (in_len + ctx->cipher_info->block_size - 1) / ctx->cipher_info->block_size;
+    n = in_len / ctx->cipher_info->block_size + (in_len % ctx->cipher_info->block_size != 0);
 
     for (i = 1; i < n; i++) {
         cx_memxor(ctx->cmac_ctx->state, input, ctx->cipher_info->block_size);
@@ -84,6 +87,7 @@ cx_err_t cx_cmac_shift_and_xor(uint8_t *output, uint8_t *input, size_t block_siz
     uint8_t constant = 0x00;
     uint8_t msb      = 0x00;
     size_t  i;
+    if (output == NULL || input == NULL) return CX_INVALID_PARAMETER;
 
     switch (block_size) {
 #ifdef HAVE_AES
@@ -100,12 +104,14 @@ cx_err_t cx_cmac_shift_and_xor(uint8_t *output, uint8_t *input, size_t block_siz
             return CX_INVALID_PARAMETER_VALUE;
     }
 
+    // Capture the original carry before an in-place doubling overwrites input[0].
+    mask = -(input[0] >> 7);
     for (i = 0; i < block_size; i++) {
-        output[block_size - 1 - i] = input[block_size - 1 - i] << 1 | msb;
-        msb                        = input[block_size - 1 - i] >> 7;
+        uint8_t byte = input[block_size - 1 - i];
+        output[block_size - 1 - i] = byte << 1 | msb;
+        msb                        = byte >> 7;
     }
 
-    mask = -(input[0] >> 7);
     output[block_size - 1] ^= constant & mask;
 
     return CX_OK;
@@ -125,7 +131,7 @@ static cx_err_t cx_cmac_generate_subkeys(cx_cipher_context_t *ctx,
     CX_CHECK(cx_cmac_shift_and_xor(sub_key2, sub_key1, ctx->cipher_info->block_size));
 
 end:
-    memset(L, 0, CMAC_MAX_BLOCK_LENGTH);
+    explicit_bzero(L, sizeof(L));
     return error;
 }
 
@@ -135,12 +141,15 @@ cx_err_t cx_cmac_finish(cx_cipher_context_t *ctx, uint8_t *output)
     uint8_t  sub_key2[CMAC_MAX_BLOCK_LENGTH];
     uint8_t  last_block[CMAC_MAX_BLOCK_LENGTH];
     cx_err_t error;
-    size_t   out_len = ctx->cipher_info->block_size;
+    size_t   out_len;
 
     if ((NULL == ctx) || (NULL == ctx->cipher_info) || (NULL == ctx->cmac_ctx)
         || (NULL == output)) {
         return CX_INVALID_PARAMETER;
     }
+    if (ctx->cipher_info->block_size != CX_AES_BLOCK_SIZE ||
+        ctx->cmac_ctx->unprocessed_len > CX_AES_BLOCK_SIZE) return CX_INVALID_PARAMETER_SIZE;
+    out_len = ctx->cipher_info->block_size;
 
     CX_CHECK(cx_cmac_generate_subkeys(ctx, sub_key1, sub_key2));
 
@@ -162,8 +171,9 @@ cx_err_t cx_cmac_finish(cx_cipher_context_t *ctx, uint8_t *output)
     memcpy(output, ctx->cmac_ctx->state, ctx->cipher_info->block_size);
 
 end:
-    memset(sub_key1, 0, CMAC_MAX_BLOCK_LENGTH);
-    memset(sub_key2, 0, CMAC_MAX_BLOCK_LENGTH);
+    explicit_bzero(sub_key1, sizeof(sub_key1));
+    explicit_bzero(sub_key2, sizeof(sub_key2));
+    explicit_bzero(last_block, sizeof(last_block));
     explicit_bzero(ctx->cmac_ctx, sizeof(cx_cmac_context_t));
     return error;
 }
@@ -190,6 +200,9 @@ cx_err_t cx_cmac(const cx_cipher_id_t type,
     CX_CHECK(cx_cmac_finish(&ctx, output));
 
 end:
+    if (ctx.cmac_ctx != NULL) explicit_bzero(ctx.cmac_ctx, sizeof(cx_cmac_context_t));
+    explicit_bzero(&key_ctx, sizeof(key_ctx));
+    explicit_bzero(&ctx, sizeof(ctx));
     return error;
 }
 

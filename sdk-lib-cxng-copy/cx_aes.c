@@ -8,7 +8,7 @@
 #include <stddef.h>
 #include <string.h>
 
-cx_err_t aes_ctr(cx_aes_key_t  *ctx_key,
+cx_err_t aes_ctr(const cx_aes_key_t *ctx_key,
                  size_t         len,
                  size_t        *nc_off,
                  uint8_t       *nonce_counter,
@@ -17,8 +17,12 @@ cx_err_t aes_ctr(cx_aes_key_t  *ctx_key,
                  uint8_t       *output)
 {
     uint8_t  c;
-    size_t   n     = *nc_off;
+    size_t   n;
     cx_err_t error = CX_INVALID_PARAMETER;
+    if (ctx_key == NULL || nc_off == NULL || nonce_counter == NULL || stream_block == NULL ||
+        (len != 0 && (input == NULL || output == NULL))) return CX_INVALID_PARAMETER;
+    n = *nc_off;
+    if (n >= CX_AES_BLOCK_SIZE) return CX_INVALID_PARAMETER_SIZE;
 
     while (len--) {
         if (n == 0) {
@@ -52,23 +56,13 @@ end:
     return error;
 }
 
+static cx_err_t aes_reset(void) {
+    cx_aes_reset_hw();
+    return CX_OK;
+}
+
 static const cx_cipher_base_t aes_base
-    = {(cx_err_t(*)(const cipher_key_t *ctx_key, const uint8_t *inblock, uint8_t *outblock))
-           cx_aes_enc_block,
-       (cx_err_t(*)(const cipher_key_t *ctx_key, const uint8_t *inblock, uint8_t *outblock))
-           cx_aes_dec_block,
-       (cx_err_t(*)(const cipher_key_t *ctx_key,
-                    size_t              len,
-                    size_t             *nc_off,
-                    uint8_t            *nonce_counter,
-                    uint8_t            *stream_block,
-                    const uint8_t      *input,
-                    uint8_t            *output)) aes_ctr,
-       (cx_err_t(*)(const cipher_key_t *ctx_key,
-                    uint32_t            operation,
-                    const uint8_t      *key,
-                    uint32_t            key_bitlen)) aes_setkey,
-       (cx_err_t(*)(void)) cx_aes_reset_hw};
+    = {cx_aes_enc_block, cx_aes_dec_block, aes_ctr, aes_setkey, aes_reset};
 
 const cx_cipher_info_t cx_aes_128_info = {128, 16, CX_AES_BLOCK_SIZE, &aes_base};
 

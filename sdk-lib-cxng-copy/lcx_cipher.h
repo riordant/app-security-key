@@ -45,10 +45,9 @@ typedef enum {
 } cx_cipher_id_t;
 
 /** Generic key structure */
-typedef struct {
-    unsigned int  size;
-    unsigned char keys[32];
-} cipher_key_t;
+// This retained fallback supports AES only. Use the SDK type directly so
+// callbacks neither type-pun distinct structs nor discard key mutability.
+typedef cx_aes_key_t cipher_key_t;
 
 /** Base cipher information */
 typedef struct {
@@ -65,7 +64,7 @@ typedef struct {
                          uint8_t            *stream_block,
                          const uint8_t      *input,
                          uint8_t            *output);  ///< Encryption in CTR mode
-    cx_err_t (*setkey_func)(const cipher_key_t *ctx_key,
+    cx_err_t (*setkey_func)(cipher_key_t *ctx_key,
                             uint32_t            operation,
                             const uint8_t      *key,
                             uint32_t key_bitlen);  ///< Set key for encryption or decryption
@@ -96,7 +95,7 @@ typedef struct {
     size_t              iv_size;                ///< Length of the initialization vector
     uint32_t            mode;                   ///< Mode of operation: ECB, CBC, CTR
     uint8_t             sig[MAX_BLOCK_LENGTH];  ///< Last block to be verified
-    const cipher_key_t *cipher_key;             ///< Cipher-specific context
+    cipher_key_t *cipher_key;                   ///< Cipher-specific context
 #ifdef HAVE_CMAC
     cx_cmac_context_t *cmac_ctx;
 #endif  // HAVE_CMAC

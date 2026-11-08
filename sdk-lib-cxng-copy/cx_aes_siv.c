@@ -6,8 +6,9 @@
 #include "cx_utils.h"
 #include "lcx_cmac.h"
 #include "lcx_aes_siv.h"
+#include <stdbool.h>
 
-uint8_t cx_constant_time_eq(const uint8_t *buf1, uint8_t *buf2, size_t len);
+uint8_t cx_constant_time_eq(const uint8_t *buf1, const uint8_t *buf2, size_t len);
 
 static void cx_clear_bits(uint8_t *input)
 {
@@ -17,6 +18,12 @@ static void cx_clear_bits(uint8_t *input)
 
 cx_err_t cx_aes_siv_init(cx_aes_siv_context_t *ctx)
 {
+    if (ctx == NULL || ctx->cipher_ctx == NULL) return CX_INVALID_PARAMETER;
+    explicit_bzero(ctx->key1, sizeof(ctx->key1));
+    explicit_bzero(ctx->key2, sizeof(ctx->key2));
+    explicit_bzero(ctx->tag_state, sizeof(ctx->tag_state));
+    ctx->key_len = 0;
+    ctx->mode = 0;
     cx_err_t error;
     CX_CHECK(cx_cipher_init(ctx->cipher_ctx));
 
@@ -27,7 +34,11 @@ end:
 cx_err_t cx_aes_siv_set_key(cx_aes_siv_context_t *ctx, const uint8_t *key, size_t key_bitlen)
 {
     // AES SIV uses two keys of either 128, 192 or 256 bits each
-    if (key_bitlen > AES_SIV_MAX_KEY_LEN * AES_SIV_KEY_NUMBER * 8) {
+    if (ctx == NULL || key == NULL || ctx->cipher_ctx == NULL ||
+        ctx->cipher_ctx->cipher_key == NULL) return CX_INVALID_PARAMETER;
+    if ((key_bitlen != 256 && key_bitlen != 384 && key_bitlen != 512) ||
+        (ctx->cipher_type != (key_bitlen == 256 ? CX_CIPHER_AES_128 :
+                             key_bitlen == 384 ? CX_CIPHER_AES_192 : CX_CIPHER_AES_256))) {
         return CX_INVALID_PARAMETER_SIZE;
     }
 
@@ -37,6 +48,20 @@ cx_err_t cx_aes_siv_set_key(cx_aes_siv_context_t *ctx, const uint8_t *key, size_
     return CX_OK;
 }
 
+static bool siv_ready(const cx_aes_siv_context_t *ctx)
+{
+    return ctx != NULL && ctx->cipher_ctx != NULL && ctx->cipher_ctx->cipher_key != NULL &&
+           ((ctx->key_len == 128 && ctx->cipher_type == CX_CIPHER_AES_128) ||
+            (ctx->key_len == 192 && ctx->cipher_type == CX_CIPHER_AES_192) ||
+            (ctx->key_len == 256 && ctx->cipher_type == CX_CIPHER_AES_256));
+}
+
+static void siv_clear_cmac(cx_aes_siv_context_t *ctx)
+{
+    if (ctx != NULL && ctx->cipher_ctx != NULL && ctx->cipher_ctx->cmac_ctx != NULL)
+        explicit_bzero(ctx->cipher_ctx->cmac_ctx, sizeof(cx_cmac_context_t));
+}
+
 cx_err_t cx_aes_siv_start(cx_aes_siv_context_t *ctx,
                           uint32_t              mode,
                           const uint8_t        *iv,
@@ -44,6 +69,12 @@ cx_err_t cx_aes_siv_start(cx_aes_siv_context_t *ctx,
 {
     uint8_t  iv_used[CX_AES_BLOCK_SIZE] = {0};
     cx_err_t error;
+
+    if (!siv_ready(ctx)) return CX_INVALID_PARAMETER;
+    if ((mode != CX_ENCRYPT && mode != CX_DECRYPT) ||
+        (mode == CX_DECRYPT && (iv == NULL || iv_len != CX_AES_BLOCK_SIZE)) ||
+        (mode == CX_ENCRYPT && (iv != NULL || iv_len != 0)))
+        return CX_INVALID_PARAMETER_VALUE;
 
     // Set up cipher to be used for CMAC computation
     CX_CHECK(cx_cipher_setup(ctx->cipher_ctx, ctx->cipher_type, CX_CHAIN_ECB));
@@ -62,6 +93,7 @@ cx_err_t cx_aes_siv_start(cx_aes_siv_context_t *ctx,
     ctx->mode = mode;
 
 end:
+    explicit_bzero(iv_used, sizeof(iv_used));
     return error;
 }
 
@@ -70,9 +102,8 @@ cx_err_t cx_aes_siv_update_aad(cx_aes_siv_context_t *ctx, const uint8_t *aad, si
     uint8_t  tmp[CX_AES_BLOCK_SIZE] = {0};
     cx_err_t error;
 
-    if (NULL == aad) {
-        return CX_OK;
-    }
+    if (!siv_ready(ctx)) return CX_INVALID_PARAMETER;
+    if (NULL == aad) return aad_len == 0 ? CX_OK : CX_INVALID_PARAMETER;
 
     CX_CHECK(cx_cipher_setup(ctx->cipher_ctx, ctx->cipher_type, CX_CHAIN_ECB));
     CX_CHECK(cx_cmac_shift_and_xor(tmp, ctx->tag_state, CX_AES_BLOCK_SIZE));
@@ -82,6 +113,7 @@ cx_err_t cx_aes_siv_update_aad(cx_aes_siv_context_t *ctx, const uint8_t *aad, si
     cx_memxor(ctx->tag_state, tmp, CX_AES_BLOCK_SIZE);
 
 end:
+    explicit_bzero(tmp, sizeof(tmp));
     return error;
 }
 
@@ -92,10 +124,10 @@ cx_err_t cx_aes_siv_update(cx_aes_siv_context_t *ctx,
 {
     size_t   out_len = len;
     cx_err_t error;
+    if (!siv_ready(ctx) || input == NULL || output == NULL) return CX_INVALID_PARAMETER;
     CX_CHECK(cx_cipher_update(ctx->cipher_ctx, input, len, output, &out_len));
-    cx_cipher_reset(ctx->cipher_ctx);
-
 end:
+    cx_cipher_reset(ctx->cipher_ctx);
     return error;
 }
 
@@ -113,6 +145,10 @@ cx_err_t cx_aes_siv_finish(cx_aes_siv_context_t *ctx,
 {
     uint8_t  tmp[CX_AES_BLOCK_SIZE] = {0};
     cx_err_t error;
+
+    if (!siv_ready(ctx) || tag == NULL || (input == NULL && in_len != 0))
+        return CX_INVALID_PARAMETER;
+    if (input == NULL) input = tmp; // empty plaintext, no NULL zero-length copy
 
     CX_CHECK(cx_cipher_setup(ctx->cipher_ctx, ctx->cipher_type, CX_CHAIN_ECB));
     if (in_len < CX_AES_BLOCK_SIZE) {
@@ -133,7 +169,8 @@ cx_err_t cx_aes_siv_finish(cx_aes_siv_context_t *ctx,
         CX_CHECK(cx_cmac_finish(ctx->cipher_ctx, ctx->tag_state));
     }
     if (CX_DECRYPT == ctx->mode) {
-        return cx_aes_siv_check_tag(ctx, tag);
+        error = cx_aes_siv_check_tag(ctx, tag);
+        goto end;
     }
     memcpy(tag, ctx->tag_state, CX_AES_BLOCK_SIZE);
     // Prepare for the AES-CTR computation
@@ -143,7 +180,25 @@ cx_err_t cx_aes_siv_finish(cx_aes_siv_context_t *ctx,
     CX_CHECK(cx_cipher_setiv(ctx->cipher_ctx, ctx->tag_state, CX_AES_BLOCK_SIZE));
 
 end:
+    explicit_bzero(tmp, sizeof(tmp));
     return error;
+}
+
+static bool overlap(const uint8_t *a, size_t alen, const uint8_t *b, size_t blen)
+{
+    uintptr_t x = (uintptr_t)a, y = (uintptr_t)b;
+    return alen && blen && (x <= y ? y - x < alen : x - y < blen);
+}
+
+static bool siv_buffers_valid(const uint8_t *input, size_t len, const uint8_t *aad,
+                              size_t aad_len, uint8_t *output, uint8_t *tag)
+{
+    if (tag == NULL || (len && (input == NULL || output == NULL)) ||
+        (aad_len && aad == NULL) || len > SIZE_MAX - CX_AES_BLOCK_SIZE ||
+        aad_len > SIZE_MAX - CX_AES_BLOCK_SIZE) return false;
+    if (input != output && overlap(input,len,output,len)) return false;
+    return !overlap(tag,CX_AES_BLOCK_SIZE,input,len) &&
+           !overlap(tag,CX_AES_BLOCK_SIZE,output,len) && !overlap(aad,aad_len,output,len);
 }
 
 cx_err_t cx_aes_siv_encrypt(cx_aes_siv_context_t *ctx,
@@ -155,11 +210,21 @@ cx_err_t cx_aes_siv_encrypt(cx_aes_siv_context_t *ctx,
                             uint8_t              *tag)
 {
     cx_err_t error;
+    uint8_t empty = 0;
+    if (!siv_ready(ctx) || !siv_buffers_valid(input,in_len,aad,aad_len,output,tag))
+        return CX_INVALID_PARAMETER;
+    if (input == NULL) input = &empty;
+    if (output == NULL) output = &empty;
     CX_CHECK(cx_aes_siv_start(ctx, CX_ENCRYPT, NULL, 0));
     CX_CHECK(cx_aes_siv_update_aad(ctx, aad, aad_len));
     CX_CHECK(cx_aes_siv_finish(ctx, input, in_len, tag));
     CX_CHECK(cx_aes_siv_update(ctx, input, output, in_len));
 end:
+    if (error != CX_OK) {
+        explicit_bzero(output, in_len);
+        explicit_bzero(tag, CX_AES_BLOCK_SIZE);
+    }
+    siv_clear_cmac(ctx);
     return error;
 }
 
@@ -172,12 +237,19 @@ cx_err_t cx_aes_siv_decrypt(cx_aes_siv_context_t *ctx,
                             uint8_t              *tag)
 {
     cx_err_t error;
+    uint8_t empty = 0;
+    if (!siv_ready(ctx) || !siv_buffers_valid(input,in_len,aad,aad_len,output,tag))
+        return CX_INVALID_PARAMETER;
+    if (input == NULL) input = &empty;
+    if (output == NULL) output = &empty;
     CX_CHECK(cx_aes_siv_start(ctx, CX_DECRYPT, tag, CX_AES_BLOCK_SIZE));
     CX_CHECK(cx_aes_siv_update(ctx, input, output, in_len));
     CX_CHECK(cx_aes_siv_update_aad(ctx, aad, aad_len));
     CX_CHECK(cx_aes_siv_finish(ctx, output, in_len, tag));
 
 end:
+    if (error != CX_OK) explicit_bzero(output, in_len);
+    siv_clear_cmac(ctx);
     return error;
 }
 
