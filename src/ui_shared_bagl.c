@@ -19,17 +19,21 @@
 #if defined(HAVE_BAGL)
 
 #include <os.h>
-#ifndef TARGET_NANOS
-#include <main_std_app.h>
+#ifdef TARGET_NANOS
+#include "os.h"
 #else
-extern void __attribute__((noreturn)) app_exit(void);
-#endif /* #ifndef TARGET_NANOS */
+#include <main_std_app.h>
+#endif
 
 #include "ux.h"
 
 static void app_quit(void) {
     // exit app here using standard app functionality
+#ifdef TARGET_NANOS
+    os_sched_exit(-1);
+#else
     app_exit();
+#endif
 }
 
 #include "config.h"

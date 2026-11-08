@@ -1,5 +1,6 @@
 # Compilation of Ledger's app
 bin/
+.cache/
 debug/
 build
 
@@ -30,3 +31,13 @@ tests/functional/snapshots-tmp/
 
 # VIM
 *.swp
+
+# Local development notes, reports and tooling
+/HARDWARE_TESTING.md
+/NANOS_BUILD.md
+/SECURITY_BACKPORTS.md
+/SECURITY_REVIEW.md
+/tests/security/results/*
+/tools/
+/tests/test_hardware_tools.py
+/tests/test_installer.py

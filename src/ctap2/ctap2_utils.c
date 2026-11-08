@@ -37,10 +37,11 @@ bool ctap2_check_rpid_filter(const char *rpId, uint32_t rpIdLen) {
 }
 
 void send_cbor_error(u2f_service_t *service, uint8_t error) {
+    responseBuffer[0] = error;
     if (CMD_IS_OVER_U2F_CMD) {
-        io_send_response_pointer((uint8_t *) &error, 1, SW_NO_ERROR);
+        io_send_response_pointer(responseBuffer, 1, SW_NO_ERROR);
     } else {
-        u2f_message_reply(service, CTAP2_CMD_CBOR, (uint8_t *) &error, 1);
+        u2f_message_reply(service, CTAP2_CMD_CBOR, responseBuffer, 1);
     }
 }
 

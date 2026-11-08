@@ -3,10 +3,10 @@ distinguished_name = req_distinguished_name
 prompt = no
 
 [req_distinguished_name]
-C = FR 
-O = Ledger 
+C = FR
+O = Ledger
 OU = Authenticator Attestation
-CN = Ledger Nano-S FIDO 2 Attestation Batch 1  
+CN = Ledger Nano-S FIDO 2 Attestation Batch 1
 
 [v3_req]
 subjectKeyIdentifier = none
