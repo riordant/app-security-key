@@ -1,0 +1,7 @@
+{
+  "lib_u2f/src/u2f_transport.c": "f72955eb9d0b11ddd3a7a886abfd16eff3f833cecf96ae0fbae5cef7dd45200c",
+  "lib_stusb_impl/u2f_io.c": "5a9e8d9ae5d029746bbaff4f5c435f21b933259b40a70b0fdd749d2e0edfdfea",
+  "lib_stusb_impl/usbd_impl.c": "d7fef76a172412ccce78ad4dc0cfe127c2d3410cee9f6fbe3afbe00fedf5d424",
+  "src/os_io_usb.c": "97df49d6cc38c9ac3c7f152bc84536a3ae5023d51a9009c1bbb46bb62f1a76c2",
+  "src/os_io_seproxyhal.c": "837026b22501bd5dd1f1956d170896d9bb4697e2708ed3b560ae4b9dd9a57f5c"
+}

@@ -24,6 +24,7 @@ set(APP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set(UT_INCLUDE_DIRS
     ${CMAKE_BINARY_DIR}/mocks/
     ${APP_DIR}/include
+    ${APP_DIR}/compat
     ${APP_DIR}/src
     ${APP_DIR}/src/ctap2
     ${APP_DIR}/src/ctap2/get_assertion

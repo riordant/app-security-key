@@ -28,11 +28,46 @@
 #include "ui_shared.h"
 #include "ctap2.h"
 #include "rk_storage.h"
+#include "transport.h"
 
-/**
- * Override app_ticker_event_callback io_event() dummy implementation
- */
+#ifdef HAVE_TRANSPORT_GUARD
+enum { HOME_READY, HOME_QUEUED, HOME_DRAWING };
+static uint8_t home_redraw;
+
+bool sk_transport_ui_busy(void) {
+    return home_redraw != HOME_READY;
+}
+
+bool sk_transport_can_abort_review(void) {
+    return ctap2UxState != CTAP2_UX_STATE_NONE || u2fUxPending;
+}
+
+void sk_transport_abort_review(void) {
+    bool had_review = sk_transport_can_abort_review();
+    u2fUxPending = false;
+    ctap2_ux_end();
+    g.get_next_assertion_enabled = false;
+    explicit_bzero(&shared_ctx, sizeof(shared_ctx));
+    // USB RX/completion callbacks only invalidate the request and queue the UI
+    // transition. Draw from a normal ticker event after the callback unwinds.
+    if (had_review) {
+        home_redraw = HOME_QUEUED;
+    }
+}
+#endif
+
+/** Override the SDK ticker callback. */
 void app_ticker_event_callback(void) {
+#ifdef HAVE_TRANSPORT_GUARD
+    if (home_redraw == HOME_QUEUED && sk_transport_ui_busy()) {
+        home_redraw = HOME_DRAWING;
+        ux_stack_pop();
+        ux_stack_push();
+        ui_idle();
+        home_redraw = HOME_READY;
+    }
+#endif
+    sk_transport_poll();
     if (ctap2UxState != CTAP2_UX_STATE_NONE) {
         u2f_transport_ctap2_send_keepalive(&G_io_u2f, KEEPALIVE_REASON_TUP_NEEDED);
     }
@@ -52,11 +87,14 @@ void app_ticker_event_callback(void) {
  */
 uint8_t io_event(uint8_t channel) {
     (void) channel;
+    bool guarded = sk_transport_callback_enter();
 
     switch (G_io_seproxyhal_spi_buffer[0]) {
         case SEPROXYHAL_TAG_BUTTON_PUSH_EVENT:
 #ifdef HAVE_BAGL
-            UX_BUTTON_PUSH_EVENT(G_io_seproxyhal_spi_buffer);
+            // The old review must not approve a wiped/resynchronized request
+            // while its replacement is queued or being drawn.
+            if (!sk_transport_ui_busy()) UX_BUTTON_PUSH_EVENT(G_io_seproxyhal_spi_buffer);
 #endif  // HAVE_BAGL
             break;
         case SEPROXYHAL_TAG_STATUS_EVENT:
@@ -88,6 +126,7 @@ uint8_t io_event(uint8_t channel) {
             break;
     }
 
+    if (guarded) sk_transport_app_leave();
     return 1;
 }
 
@@ -126,7 +165,10 @@ void app_main() {
         g.is_nfc = CMD_IS_OVER_U2F_NFC;
 
         // Dispatch APDU command to handler
-        if (u2f_handle_apdu(G_io_apdu_buffer, input_len) < 0) {
+        sk_transport_app_enter();
+        int result = u2f_handle_apdu(G_io_apdu_buffer, input_len);
+        sk_transport_app_leave();
+        if (result < 0) {
             PRINTF("=> apdu_dispatcher failure\n");
             return;
         }

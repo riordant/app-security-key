@@ -21,6 +21,7 @@
 #include "os_io_seproxyhal.h"
 
 #include "globals.h"
+#include "transport.h"
 
 global_t g;
 
@@ -28,18 +29,24 @@ shared_ctx_t shared_ctx;
 ctap2_ux_state_t ctap2UxState;
 bool u2fUxPending;
 
-#ifdef TARGET_NANOS
-// Spare RAM on Nanos
-#else
+#ifndef TARGET_NANOS
 uint8_t responseBuffer[IO_APDU_BUFFER_SIZE];
-#endif
 
 uint8_t ctap2RequestBuffer[IO_APDU_BUFFER_SIZE];
+#endif
+
+void ctap2_request_clear(void) {
+#ifdef TARGET_NANOS
+    sk_transport_request_clear();
+#else
+    explicit_bzero(ctap2RequestBuffer, sizeof(ctap2RequestBuffer));
+#endif
+}
 
 void ctap2_ux_end(void) {
     ctap2UxState = CTAP2_UX_STATE_NONE;
     // The request can hold credential IDs decrypted in place, nonces included.
-    explicit_bzero(ctap2RequestBuffer, sizeof(ctap2RequestBuffer));
+    ctap2_request_clear();
 }
 
 #include "string_utils.h"

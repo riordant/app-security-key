@@ -47,6 +47,8 @@ void ctap2_handle_cmd_cbor(u2f_service_t *service, uint8_t *buffer, uint16_t len
         send_cbor_error(service, ERROR_INVALID_CBOR);
         return;
     }
+    const uint8_t command = buffer[0];
+    bool owned_request = false;
 
     // Only these commands keep pointers into their request across the user review,
     // so only they are gated and only they are copied. Every other command, known
@@ -62,14 +64,18 @@ void ctap2_handle_cmd_cbor(u2f_service_t *service, uint8_t *buffer, uint16_t len
                 send_cbor_error(service, ERROR_OPERATION_PENDING);
                 return;
             }
-            if (length > sizeof(ctap2RequestBuffer)) {
+            if (length > IO_APDU_BUFFER_SIZE) {
                 PRINTF("CBOR command too long\n");
                 send_cbor_error(service, ERROR_REQUEST_TOO_LARGE);
                 return;
             }
-            // G_io_apdu_buffer does not survive the user review.
+            owned_request = true;
+#ifndef TARGET_NANOS
+            // Other targets use upstream's separate request copy. Nano S uses
+            // the guarded receive buffer and cannot clear it before its reply.
             memcpy(ctap2RequestBuffer, buffer, length);
             buffer = ctap2RequestBuffer;
+#endif
             break;
         default:
             break;
@@ -114,10 +120,10 @@ void ctap2_handle_cmd_cbor(u2f_service_t *service, uint8_t *buffer, uint16_t len
 end:
     // A copied request is wiped once nothing reads it: a started review wipes it when it
     // ends, and getNextAssertion reads the getAssertion request again.
-    if ((buffer == ctap2RequestBuffer) && (ctap2UxState == CTAP2_UX_STATE_NONE) &&
+    if (owned_request && (ctap2UxState == CTAP2_UX_STATE_NONE) &&
         !(g.get_next_assertion_enabled &&
-          ((buffer[0] == CBOR_GET_ASSERTION) || (buffer[0] == CBOR_GET_NEXT_ASSERTION)))) {
-        explicit_bzero(ctap2RequestBuffer, sizeof(ctap2RequestBuffer));
+          ((command == CBOR_GET_ASSERTION) || (command == CBOR_GET_NEXT_ASSERTION)))) {
+        ctap2_request_clear();
     }
 }
 
@@ -129,7 +135,7 @@ void ctap2_handle_cmd_cancel(u2f_service_t *service, uint8_t *buffer, uint16_t l
     // Nothing of the cancelled command may serve a later one, such as getNextAssertion.
     g.get_next_assertion_enabled = false;
     explicit_bzero(globals_get_ctap2_data(), sizeof(ctap2_data_t));
-    explicit_bzero(ctap2RequestBuffer, sizeof(ctap2RequestBuffer));
+    ctap2_request_clear();
 
     if (ctap2UxState != CTAP2_UX_STATE_NONE) {
         PRINTF("Cancel pending UI\n");

@@ -25,6 +25,15 @@ ifneq ($(TARGET_NAME),$(filter $(TARGET_NAME),TARGET_NANOS TARGET_NANOX TARGET_N
 $(error Environment variable TARGET_NAME is not valid or not supported)
 endif
 
+INCLUDES_PATH += compat
+ifeq ($(TARGET_NAME),TARGET_NANOS)
+ifeq ($(wildcard $(BOLOS_SDK)/.transport.json),)
+$(error Prepare the SDK with python3 compat/prepare_sdk.py SOURCE DESTINATION)
+endif
+DEFINES += HAVE_TRANSPORT_GUARD
+APP_SOURCE_PATH += compat
+endif
+
 APPNAME = "Security Key"
 
 CURVE_APP_LOAD_PARAMS = secp256r1

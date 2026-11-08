@@ -123,16 +123,18 @@ extern global_t g;
 extern u2f_service_t G_io_u2f;
 
 #ifdef TARGET_NANOS
-// Spare RAM on Nanos
+// The legacy SDK guard owns this storage through review and the final IN ACK.
 #define responseBuffer G_io_apdu_buffer
 #else
 extern uint8_t responseBuffer[IO_APDU_BUFFER_SIZE];
-#endif
-
 // App-owned copy of the CBOR request. G_io_apdu_buffer aliases G_io_tx_buffer and
 // is overwritten by the next command without the app being called, while handlers
 // keep pointers into their request across the user review.
 extern uint8_t ctap2RequestBuffer[IO_APDU_BUFFER_SIZE];
+#endif
+
+// Nano S defers clearing shared request/reply storage until its owner releases it.
+void ctap2_request_clear(void);
 
 typedef struct ctap2_data_t {
     union ctap2_data_u {
